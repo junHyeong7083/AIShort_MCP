@@ -67,9 +67,11 @@ InitTestScene*.unity*
 [Aa]ssets/**/[Oo]penAI[Kk]ey.asset
 [Aa]ssets/**/[Oo]penAI[Kk]ey.asset.meta
 
-# 2️⃣ Local Config JSON files (환경 설정 / API key 등)
+# 2️⃣ Local Config JSON / ScriptableObject files (환경 설정 / API key 등)
 [Aa]ssets/**/[Cc]onfig.json
 [Aa]ssets/**/[Cc]onfig.json.meta
+[Aa]ssets/**/[Cc]onfig.asset
+[Aa]ssets/**/[Cc]onfig.asset.meta
 
 # 3️⃣ Developer-only secret/test data
 [Aa]ssets/**/[Ss]ecret*/
