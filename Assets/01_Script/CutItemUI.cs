@@ -47,6 +47,7 @@ public class CutItemUI : MonoBehaviour,
 
     public void OnPointerEnter(PointerEventData eventData)
     {
+        //Debug.Log("Enter");
         if (isSelected) return;
         if (background != null)
             background.color = hoverColor;
@@ -54,6 +55,7 @@ public class CutItemUI : MonoBehaviour,
 
     public void OnPointerExit(PointerEventData eventData)
     {
+       // Debug.Log("Exit");
         if (isSelected) return;
         if (background != null)
             background.color = normalColor;
@@ -61,6 +63,7 @@ public class CutItemUI : MonoBehaviour,
 
     public void OnPointerClick(PointerEventData eventData)
     {
+      //  Debug.Log("Click");
         if (owner != null)
             owner.OnCutItemClicked(this);
     }

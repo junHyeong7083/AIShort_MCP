@@ -12,12 +12,13 @@ public class UIBinding : MonoBehaviour
     public API apiConfig;
 
     [Header("Input")]
-    public InputField promptInput;           // 왼쪽 큰 입력창
+    public InputField promptInput;           // 왼쪽 큰 입력창 (줄글 시나리오)
 
     [Header("Buttons")]
-    public Button transformButton;           // "변환하기" 버튼
+    public Button transformButton;           // 1차 컷분할 버튼
+    public Button refineButton;              // 2차 가공(스토리보드/프롬프트) 버튼
 
-    [Header("Style Dropdowns (2차 가공용, 지금은 미사용)")]
+    [Header("Style Dropdowns (2차 가공용)")]
     public Dropdown cameraStyleDropdown;
     public Dropdown lightingStyleDropdown;
     public Dropdown movementSpeedDropdown;
@@ -25,21 +26,30 @@ public class UIBinding : MonoBehaviour
     public Dropdown movementTypesDropdown;
     public Dropdown textStylesDropdown;
 
-    [Header("Cut List UI")]
+    [Header("Cut List UI (1차 결과)")]
     public RectTransform cutsParent;         // ScrollView의 Content
     public GameObject cutItemPrefab;         // CutItem 프리팹
 
-    [Header("Runtime Cut Data")]
-    public CutList currentCutList;           // 나중에 Runway API 호출할 때 사용할 데이터
+    [Header("2nd Pass Output")]
+    public Text refineOutputText;            // 2차 가공 결과 출력 Text
 
-    // 현재 선택된 컷 UI (없으면 null)
+    [Header("Runtime Cut Data")]
+    public CutList currentCutList;           // 전체 컷 데이터 (Runway 호출 때 사용 예정)
+
+    // 현재 선택된 컷 UI
     public CutItemUI SelectedCutItem { get; private set; }
 
     const string Endpoint = "https://api.openai.com/v1/chat/completions";
     const string Model = "gpt-4.1-mini";
 
+    #region OpenAI DTO
+
     [Serializable]
-    class ChatMessage { public string role; public string content; }
+    class ChatMessage
+    {
+        public string role;
+        public string content;
+    }
 
     [Serializable]
     class ChatRequest
@@ -50,10 +60,18 @@ public class UIBinding : MonoBehaviour
     }
 
     [Serializable]
-    class ChatResponse { public Choice[] choices; }
+    class ChatResponse
+    {
+        public Choice[] choices;
+    }
 
     [Serializable]
-    class Choice { public ChatMessage message; }
+    class Choice
+    {
+        public ChatMessage message;
+    }
+
+    #endregion
 
     class CutData
     {
@@ -62,7 +80,6 @@ public class UIBinding : MonoBehaviour
         public string description;
     }
 
-    // 내부에서 관리할 UI 리스트
     readonly List<CutItemUI> cutItemUIList = new List<CutItemUI>();
 
     // ============================ 라이프사이클 ============================
@@ -72,15 +89,23 @@ public class UIBinding : MonoBehaviour
             transformButton.onClick.AddListener(OnClickTransform);
         else
             Debug.LogWarning("transformButton이 설정되지 않았습니다.");
+
+        if (refineButton != null)
+            refineButton.onClick.AddListener(OnClickRefine);
+        else
+            Debug.LogWarning("refineButton이 설정되지 않았습니다.");
     }
 
     void OnDestroy()
     {
         if (transformButton != null)
             transformButton.onClick.RemoveListener(OnClickTransform);
+
+        if (refineButton != null)
+            refineButton.onClick.RemoveListener(OnClickRefine);
     }
 
-    // ============================ 버튼 클릭 ============================
+    // ============================ 1차: 줄글 → 컷 분할 ============================
     void OnClickTransform()
     {
         var raw = promptInput != null ? promptInput.text : "";
@@ -100,7 +125,6 @@ public class UIBinding : MonoBehaviour
         StartCoroutine(RequestCutSplit(raw));
     }
 
-    // ============================ GPT 컷 분할 요청 ============================
     IEnumerator RequestCutSplit(string scenario)
     {
         Debug.Log("⏳ GPT에 컷 분할 요청 중...");
@@ -108,7 +132,43 @@ public class UIBinding : MonoBehaviour
         string systemPrompt =
 @"너는 영상 연출을 위한 컷 분할 보조 도우미야.
 
-(중략)  // 여기는 네가 쓰던 프롬프트 그대로 두면 됨";
+사용자는 한국어로 된 줄글 시놉시스를 한 덩어리로 보낸다.
+너의 역할은 이 이야기를 **한 장면에 하나의 컷**이 되도록 최대한 잘게 나누어,
+""컷"" 리스트로 정리하고 각 컷마다 등장인물과 배경 정보를 함께 추출하는 것이다.
+
+반드시 아래 형식으로만 출력해라:
+
+GPT-컷분할
+Cut 1 — [짧은 한 줄 제목]
+설명: [이 컷에서 일어나는 일에 대한 1문장 설명]
+등장인물:
+- [인물1 이름과 간단한 한 줄 설명]
+- [인물2 이름과 간단한 한 줄 설명]
+배경:
+- [장소와 배경 구조를 1~2문장으로 설명]
+
+Cut 2 — [짧은 한 줄 제목]
+설명: [이 컷에서 일어나는 일에 대한 1문장 설명]
+등장인물:
+- [...]
+배경:
+- [...]
+
+Cut 3 — ...
+
+규칙:
+- 출력은 모두 한국어로 작성한다.
+- 컷 번호는 Cut 1부터 순서대로 증가시킨다.
+- **한 컷에는 하나의 핵심 장면/행동만 담는다.**
+- 인물이 새로운 행동을 시작하거나, 장소가 바뀌거나, 시간이 바뀌거나,
+  다른 인물이 합류·퇴장하면 반드시 새로운 컷으로 나눈다.
+- ""설명""은 반드시 1문장만 작성한다.
+- 컷 개수를 줄이려고 여러 사건을 한 컷에 넣지 말고,
+  컷 수가 다소 많아지더라도 한 컷에 한 장면만 담도록 분할하라.
+- 원문에 있는 중요한 사건은 빠뜨리지 말고 반드시 하나 이상의 컷으로 포함한다.
+- 반드시 위에 제시한 형식과 줄 순서를 그대로 지킨다.
+- ""GPT-컷분할""이라는 첫 줄 제목은 반드시 포함한다.
+- 위에서 제시한 형식 외의 해설, 말투, 설명 문장은 절대 추가하지 않는다.";
 
         string userPrompt =
             "다음 시놉시스를 위 규칙에 맞는 컷 리스트로 분할해줘.\n\n" +
@@ -160,7 +220,7 @@ public class UIBinding : MonoBehaviour
         }
     }
 
-    // ============================ 프리팹 생성 + CutInfo 저장 ============================
+    // ============================ 1차 결과 → 프리팹 생성 + CutInfo 저장 ============================
     void BuildCutItems(string gptText)
     {
         if (cutsParent == null || cutItemPrefab == null)
@@ -178,20 +238,26 @@ public class UIBinding : MonoBehaviour
 
         List<CutData> cuts = ParseCuts(gptText);
 
-        // --- CutInfo 배열 생성해서 Runtime 데이터로 저장 ---
         var cutInfos = new CutInfo[cuts.Count];
+
         for (int i = 0; i < cuts.Count; i++)
         {
             var c = cuts[i];
+
+            // 런타임 데이터 생성
             var info = new CutInfo
             {
                 index = c.index,
-                sceneDescription = c.description,
-                shotType = "",          // 나중에 별도 UI/프롬프트로 채울 부분
-                characterPrompt = "",
-                backgroundPrompt = "",
-                cameraPrompt = "",
-                duration = ""
+                sceneDescriptionKo = c.description,
+
+                cameraStyle = "",
+                lightingStyle = "",
+                movementSpeed = "",
+                movementType = "",
+                aestheticStyle = "",
+                textStyle = "",
+                koreanShot = "",
+                englishPrompt = ""
             };
 
             cutInfos[i] = info;
@@ -208,7 +274,7 @@ public class UIBinding : MonoBehaviour
 
         currentCutList = new CutList { cuts = cutInfos };
 
-        // 레이아웃 가라 리프레시 (네가 말한 껐다 켜기)
+        // 레이아웃 가라 리프레시
         var vlg = cutsParent.GetComponent<VerticalLayoutGroup>();
         if (vlg != null)
         {
@@ -219,21 +285,18 @@ public class UIBinding : MonoBehaviour
         LayoutRebuilder.ForceRebuildLayoutImmediate(cutsParent);
     }
 
-    // ============================ 카드 선택 처리 ============================
+    // ============================ 컷 카드 선택 처리 ============================
     public void OnCutItemClicked(CutItemUI clicked)
     {
         SelectedCutItem = clicked;
 
-        // 한 개만 선택 상태로 유지
         foreach (var ui in cutItemUIList)
             ui.SetSelected(ui == clicked);
 
-        // 여기서 clicked.cutInfo 를 가지고
-        // 나중에 Runway API 호출 파라미터 구성하면 됨
-        Debug.Log($"선택된 컷: {clicked.cutInfo.index}, desc={clicked.cutInfo.sceneDescription}");
+        Debug.Log($"선택된 컷: {clicked.cutInfo.index}, desc={clicked.cutInfo.sceneDescriptionKo}");
     }
 
-    // ============================ GPT 텍스트 파싱 ============================
+    // ============================ GPT 컷 텍스트 파싱 ============================
     List<CutData> ParseCuts(string gptText)
     {
         var list = new List<CutData>();
@@ -243,6 +306,7 @@ public class UIBinding : MonoBehaviour
         var lines = gptText.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
 
         CutData current = null;
+
         for (int i = 0; i < lines.Length; i++)
         {
             string line = lines[i].Trim();
@@ -252,26 +316,41 @@ public class UIBinding : MonoBehaviour
             if (line.StartsWith("GPT-컷분할"))
                 continue;
 
-            if (line.StartsWith("Cut "))
+            if (line.StartsWith("Cut ") || line.StartsWith("컷 "))
             {
                 if (current != null)
+                {
+                    if (string.IsNullOrEmpty(current.description))
+                        current.description = current.title;
                     list.Add(current);
+                }
 
                 current = new CutData();
 
+                // 번호
                 int num = 0;
-                var parts = line.Split(new[] { ' ' }, 3);
-                if (parts.Length >= 2)
-                    int.TryParse(parts[1], out num);
+                int spaceIdx = line.IndexOf(' ');
+                if (spaceIdx >= 0)
+                {
+                    int colonIdx = line.IndexOfAny(new char[] { '—', '-', ':' }, spaceIdx + 1);
+                    string numPart;
+                    if (colonIdx > spaceIdx)
+                        numPart = line.Substring(spaceIdx + 1, colonIdx - (spaceIdx + 1));
+                    else
+                        numPart = line.Substring(spaceIdx + 1);
 
+                    numPart = numPart.Trim().TrimEnd('.', '번', ':');
+                    int.TryParse(numPart, out num);
+                }
                 current.index = num > 0 ? num : list.Count + 1;
 
-                int dashIndex = line.IndexOf('—');
-                if (dashIndex < 0)
-                    dashIndex = line.IndexOf('-');
+                // 제목
+                int sepIdx = line.IndexOf('—');
+                if (sepIdx < 0) sepIdx = line.IndexOf('-');
+                if (sepIdx < 0) sepIdx = line.IndexOf(':');
 
-                if (dashIndex >= 0 && dashIndex + 1 < line.Length)
-                    current.title = line.Substring(dashIndex + 1).Trim();
+                if (sepIdx >= 0 && sepIdx + 1 < line.Length)
+                    current.title = line.Substring(sepIdx + 1).Trim();
                 else
                     current.title = line;
             }
@@ -288,8 +367,236 @@ public class UIBinding : MonoBehaviour
         }
 
         if (current != null)
+        {
+            if (string.IsNullOrEmpty(current.description))
+                current.description = current.title;
             list.Add(current);
+        }
 
         return list;
+    }
+
+    // ============================ 2차: 선택 컷 → Storyboard/Prompt ============================
+    void OnClickRefine()
+    {
+        if (SelectedCutItem == null || SelectedCutItem.cutInfo == null)
+        {
+            Debug.LogWarning("먼저 컷을 하나 선택하세요.");
+            if (refineOutputText != null)
+                refineOutputText.text = "먼저 컷 리스트에서 컷 하나를 클릭해서 선택하세요.";
+            return;
+        }
+
+        if (apiConfig == null || string.IsNullOrEmpty(apiConfig.ChatGPT_API))
+        {
+            Debug.LogError("ChatGPT API 키가 설정되지 않았습니다.");
+            if (refineOutputText != null)
+                refineOutputText.text = "ChatGPT API 키가 설정되지 않았습니다.";
+            return;
+        }
+
+        // 드롭다운 값 읽기
+        string cam = cameraStyleDropdown != null
+            ? cameraStyleDropdown.options[cameraStyleDropdown.value].text
+            : "";
+        string light = lightingStyleDropdown != null
+            ? lightingStyleDropdown.options[lightingStyleDropdown.value].text
+            : "";
+        string moveSpeed = movementSpeedDropdown != null
+            ? movementSpeedDropdown.options[movementSpeedDropdown.value].text
+            : "";
+        string aesthetic = styleAestheticDropdown != null
+            ? styleAestheticDropdown.options[styleAestheticDropdown.value].text
+            : "";
+        string moveType = movementTypesDropdown != null
+            ? movementTypesDropdown.options[movementTypesDropdown.value].text
+            : "";
+        string textStyle = textStylesDropdown != null
+            ? textStylesDropdown.options[textStylesDropdown.value].text
+            : "";
+
+        var cut = SelectedCutItem.cutInfo;
+
+        // CutInfo에 스타일 저장
+        cut.cameraStyle = cam;
+        cut.lightingStyle = light;
+        cut.movementSpeed = moveSpeed;
+        cut.movementType = moveType;
+        cut.aestheticStyle = aesthetic;
+        cut.textStyle = textStyle;
+
+        StartCoroutine(RequestStoryboardForCut(
+            cut, cam, light, moveSpeed, aesthetic, moveType, textStyle));
+    }
+
+    IEnumerator RequestStoryboardForCut(
+        CutInfo cut,
+        string cameraStyle,
+        string lightingStyle,
+        string movementSpeed,
+        string aestheticStyle,
+        string movementType,
+        string textStyle
+    )
+    {
+        if (refineOutputText != null)
+            refineOutputText.text = $"선택된 컷 {cut.index}를 2차 가공 중...";
+
+        // 슬라이드에서 보여준 Storyboard / Prompt 레이아웃에 맞춘 프롬프트
+        string systemPrompt =
+@"You are a storyboard and prompt engineering assistant for AI video generation.
+
+The user will give you:
+- One short Korean cut description (scene of a story),
+- Several style options (camera, lighting, movement, aesthetic, text style).
+
+Your job:
+- Turn this into a ONE-SHOT storyboard + prompt
+- in the following EXACT text layout.
+
+==== OUTPUT FORMAT (must follow exactly) ====
+
+Storyboard
+
+Cut <index> — <짧은 한국어 컷 제목>
+
+Base
+Location: <장소를 한국어로 한 줄>
+Time: <시간대를 한국어로 한 단어 또는 짧은 표현>
+Characters: <등장인물 이름들, 한국어>
+Core Event: <이 컷에서 일어나는 핵심 사건을 한국어 1문장으로>
+
+Options-옵션들은 전부적용, 3개만출력
+Camera Style: <camera style (use user option, English)>
+Lighting: <lighting style (use user option, English)>
+Style/Aesthetic: <aesthetic style (use user option, English)>
+
+Prompt
+
+KOR
+<2~3문장으로, 카메라 구도 + 인물 행동 + 분위기를 한국어로 묘사한다.
+각 문장은 줄바꿈으로 구분한다.>
+
+ENG
+<One paragraph English description (1~3 sentences) that combines
+scene, characters, background, camera, lighting, movement, and aesthetic.
+Write this as a coherent block of text that can be used directly
+as an AI video prompt.>
+
+==== RULES ====
+- Keep the headers and labels EXACTLY as shown:
+  Storyboard / Base / Options / Prompt / KOR / ENG.
+- Use the user's style options as hard constraints (do not change their meaning).
+- Do NOT add any other sections or explanations outside this format.
+- All Korean text must be in Korean; all English text must be in English.";
+
+        string userPrompt =
+            $"[Cut Index]\n{cut.index}\n\n" +
+            "[Cut Description (Korean)]\n" +
+            cut.sceneDescriptionKo + "\n\n" +
+            "[Style Options]\n" +
+            $"CameraStyle = {cameraStyle}\n" +
+            $"LightingStyle = {lightingStyle}\n" +
+            $"MovementSpeed = {movementSpeed}\n" +
+            $"MovementType = {movementType}\n" +
+            $"Aesthetic = {aestheticStyle}\n" +
+            $"TextStyle = {textStyle}\n\n" +
+            "Generate the storyboard + prompt in the exact format.";
+
+        var requestBody = new ChatRequest
+        {
+            model = Model,
+            messages = new[]
+            {
+                new ChatMessage { role = "system", content = systemPrompt },
+                new ChatMessage { role = "user", content = userPrompt }
+            }
+        };
+
+        string json = JsonUtility.ToJson(requestBody);
+
+        using (var req = new UnityWebRequest(Endpoint, "POST"))
+        {
+            byte[] bodyRaw = Encoding.UTF8.GetBytes(json);
+            req.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            req.downloadHandler = new DownloadHandlerBuffer();
+            req.SetRequestHeader("Content-Type", "application/json");
+            req.SetRequestHeader("Authorization", "Bearer " + apiConfig.ChatGPT_API);
+
+            yield return req.SendWebRequest();
+
+            if (req.result != UnityWebRequest.Result.Success)
+            {
+                Debug.LogError($"HTTP Error(2nd): {req.responseCode}\n{req.error}\n{req.downloadHandler.text}");
+                if (refineOutputText != null)
+                    refineOutputText.text = $"HTTP Error: {req.responseCode}\n{req.error}\n{req.downloadHandler.text}";
+                yield break;
+            }
+
+            string content;
+            try
+            {
+                var res = JsonUtility.FromJson<ChatResponse>(req.downloadHandler.text);
+                content = res.choices[0].message.content.Trim();
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"JSON 파싱 실패(2nd): {e.Message}\n{req.downloadHandler.text}");
+                if (refineOutputText != null)
+                    refineOutputText.text = $"JSON 파싱 실패: {e.Message}\n{req.downloadHandler.text}";
+                yield break;
+            }
+
+            Debug.Log("2차 스토리보드 응답:\n" + content);
+
+            if (refineOutputText != null)
+                refineOutputText.text = content;
+
+            // === CutInfo에 KOR / ENG 블록 저장 ===
+            if (cut != null)
+            {
+                var lines = content.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                bool inKor = false;
+                bool inEng = false;
+                var korSb = new StringBuilder();
+                var engSb = new StringBuilder();
+
+                foreach (var rawLine in lines)
+                {
+                    string line = rawLine.Trim();
+
+                    if (line == "KOR")
+                    {
+                        inKor = true;
+                        inEng = false;
+                        continue;
+                    }
+
+                    if (line == "ENG")
+                    {
+                        inKor = false;
+                        inEng = true;
+                        continue;
+                    }
+
+                    if (inKor)
+                    {
+                        if (korSb.Length > 0) korSb.Append("\n");
+                        korSb.Append(line);
+                    }
+                    else if (inEng)
+                    {
+                        if (engSb.Length > 0) engSb.Append(" ");
+                        engSb.Append(line);
+                    }
+                }
+
+                cut.koreanShot = korSb.ToString().Trim();
+                cut.englishPrompt = engSb.ToString().Trim();
+
+                Debug.Log($"[Cut {cut.index}] KOR 저장: {cut.koreanShot}");
+                Debug.Log($"[Cut {cut.index}] ENG 저장: {cut.englishPrompt}");
+            }
+        }
     }
 }

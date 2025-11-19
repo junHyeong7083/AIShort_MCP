@@ -6,14 +6,21 @@ public class CutList
     public CutInfo[] cuts;
 }
 
-
+[Serializable]
 public class CutInfo
 {
-    public int index;                 // 컷 번호
-    public string shotType;           // 숏 타입(와이드, 클로즈업 등)
-    public string sceneDescription;   // 장면 설명(한국어)
-    public string characterPrompt;    // 인물 프롬프트(영어 위주)
-    public string backgroundPrompt;   // 배경 프롬프트
-    public string cameraPrompt;       // 카메라/무브/조명 등
-    public string duration;           // 대략 몇 초짜리 컷인지
+    public int index;                 // 컷 번호 (1, 2, 3 ...)
+
+    public string sceneDescriptionKo;
+
+    public string cameraStyle;
+    public string lightingStyle;
+    public string movementSpeed;
+    public string movementType;
+    public string aestheticStyle;
+    public string textStyle;
+
+    // 2차 가공 결과
+    public string koreanShot;
+    public string englishPrompt;
 }
