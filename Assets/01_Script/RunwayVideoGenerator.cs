@@ -24,7 +24,8 @@ public class RunwayVideoGenerator : MonoBehaviour
     [Header("Runway Options")]
     [Tooltip("Runway Text-To-Video 엔드포인트")]
     public string textToVideoEndpoint = "https://api.dev.runwayml.com/v1/text_to_video";
-
+    [Tooltip("Runway Image-To-Video 엔드포인트")]
+    public string imageToVideoEndpoint = "https://api.dev.runwayml.com/v1/image_to_video"; // 추가
     [Tooltip("Runway API Version 헤더 값 (공식 문서 보고 최신값으로 교체 가능)")]
     public string runwayApiVersion = "2024-11-06";
 
@@ -50,6 +51,16 @@ public class RunwayVideoGenerator : MonoBehaviour
     private class RunwayTextToVideoRequest
     {
         public string promptText;
+        public string ratio;
+        public bool audio;
+        public int duration;
+        public string model;
+    }
+    [Serializable]
+    private class RunwayImageToVideoRequest   // 추가
+    {
+        public string promptImage;  // 업로드된 이미지 URL
+        public string promptText;   // 프롬프트 텍스트
         public string ratio;
         public bool audio;
         public int duration;
@@ -160,7 +171,45 @@ public class RunwayVideoGenerator : MonoBehaviour
 
         StartCoroutine(Co_GenerateVideo(prompt, _saveFilePath));
     }
+    public void GenerateFromImageUrl(string promptImageUrl)
+    {
+        if (apiConfig == null || string.IsNullOrEmpty(apiConfig.Runway_API))
+        {
+            SetStatus("Runway API 키가 설정되지 않았습니다.");
+            return;
+        }
 
+        if (refineOutputText == null || string.IsNullOrWhiteSpace(refineOutputText.text))
+        {
+            SetStatus("2차 가공 텍스트(refineOutputText)가 비어 있습니다.");
+            return;
+        }
+
+        if (string.IsNullOrEmpty(promptImageUrl))
+        {
+            SetStatus("이미지 URL이 비어 있습니다.");
+            return;
+        }
+
+        // 저장 경로 없으면 기본값으로 자동 지정
+        if (string.IsNullOrEmpty(_saveFilePath))
+        {
+#if UNITY_EDITOR
+            _saveFilePath = Path.Combine(Application.dataPath, "../runway_image2video.mp4");
+#else
+            _saveFilePath = Path.Combine(Application.persistentDataPath, "runway_image2video.mp4");
+#endif
+            if (filePathText != null)
+                filePathText.text = _saveFilePath;
+        }
+
+        string raw = refineOutputText.text;
+        string prompt = ExtractEngPrompt(raw);
+        if (string.IsNullOrWhiteSpace(prompt))
+            prompt = raw;
+
+        StartCoroutine(Co_GenerateVideoFromImage(promptImageUrl, prompt, _saveFilePath));
+    }
     // refineOutputText 안에서 "ENG" 이후 부분만 추출
     private string ExtractEngPrompt(string fullText)
     {
@@ -359,4 +408,59 @@ public class RunwayVideoGenerator : MonoBehaviour
 
         SetStatus($"✅ 영상 저장 완료: {savePath}");
     }
+    private IEnumerator Co_GenerateVideoFromImage(string promptImageUrl, string promptText, string savePath)
+    {
+        SetStatus("Runway(ImageToVideo)에 영상 생성 요청 중...");
+
+        var body = new RunwayImageToVideoRequest
+        {
+            promptImage = promptImageUrl,
+            promptText = promptText,
+            ratio = ratio,
+            audio = includeAudio,
+            duration = durationSeconds,
+            model = runwayModel
+        };
+
+        string json = JsonUtility.ToJson(body);
+        byte[] bodyRaw = Encoding.UTF8.GetBytes(json);
+
+        using (var req = new UnityWebRequest(imageToVideoEndpoint, "POST"))
+        {
+            req.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            req.downloadHandler = new DownloadHandlerBuffer();
+            req.SetRequestHeader("Content-Type", "application/json");
+            req.SetRequestHeader("Authorization", "Bearer " + apiConfig.Runway_API);
+            req.SetRequestHeader("X-Runway-Version", runwayApiVersion);
+
+            yield return req.SendWebRequest();
+
+            if (req.result != UnityWebRequest.Result.Success)
+            {
+                SetStatus($"HTTP Error(ImageToVideo Create): {req.responseCode}\n{req.error}\n{req.downloadHandler.text}");
+                yield break;
+            }
+
+            RunwayTaskCreateResponse createRes = null;
+            try
+            {
+                createRes = JsonUtility.FromJson<RunwayTaskCreateResponse>(req.downloadHandler.text);
+            }
+            catch (Exception e)
+            {
+                SetStatus($"Runway 응답 파싱 실패(ImageToVideo Create): {e.Message}\n{req.downloadHandler.text}");
+                yield break;
+            }
+
+            if (createRes == null || string.IsNullOrEmpty(createRes.id))
+            {
+                SetStatus($"Runway 응답에 task id가 없습니다.\n{req.downloadHandler.text}");
+                yield break;
+            }
+
+            SetStatus($"ImageToVideo Task 생성 완료 (id={createRes.id}) – 렌더링 대기 중...");
+            yield return StartCoroutine(Co_PollRunwayTask(createRes.id, savePath));
+        }
+    }
+
 }
