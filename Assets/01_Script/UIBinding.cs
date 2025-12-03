@@ -36,8 +36,18 @@ public class UIBinding : MonoBehaviour
     [Header("Runtime Cut Data")]
     public CutList currentCutList;           // 전체 컷 데이터 (Runway 호출 때 사용 예정)
 
+    [Header("Character System")]
+    public CharacterManager characterManager;  // @char 태그 처리용
+
     // 현재 선택된 컷 UI
     public CutItemUI SelectedCutItem { get; private set; }
+
+    // 현재 시놉시스에서 파싱된 캐릭터/배경들
+    public List<CharacterProfile> ParsedCharacters { get; private set; } = new List<CharacterProfile>();
+    public List<BackgroundProfile> ParsedBackgrounds { get; private set; } = new List<BackgroundProfile>();
+
+    // 원본 시놉시스 (태그 포함) - Runway referenceImages 빌드용
+    public string OriginalSynopsis { get; private set; } = "";
 
     const string Endpoint = "https://api.openai.com/v1/chat/completions";
     const string Model = "gpt-4.1-mini";
@@ -122,6 +132,32 @@ public class UIBinding : MonoBehaviour
             return;
         }
 
+        // 원본 시놉시스 저장 (태그 포함) - Runway referenceImages 빌드용
+        OriginalSynopsis = raw;
+
+        // @char 태그 파싱
+        ParsedCharacters.Clear();
+        ParsedBackgrounds.Clear();
+        if (characterManager != null)
+        {
+            ParsedCharacters = characterManager.ParseCharacterTags(raw);
+            if (ParsedCharacters.Count > 0)
+            {
+                Debug.Log($"[UIBinding] @char 태그에서 {ParsedCharacters.Count}명의 캐릭터 파싱됨:");
+                foreach (var c in ParsedCharacters)
+                    Debug.Log($"  - {c.name}: {c.textProfile}");
+            }
+
+            // @back 태그 파싱
+            ParsedBackgrounds = characterManager.ParseBackgroundTags(raw);
+            if (ParsedBackgrounds.Count > 0)
+            {
+                Debug.Log($"[UIBinding] @back 태그에서 {ParsedBackgrounds.Count}개의 배경 파싱됨:");
+                foreach (var b in ParsedBackgrounds)
+                    Debug.Log($"  - {b.name}: {b.description}");
+            }
+        }
+
         StartCoroutine(RequestCutSplit(raw));
     }
 
@@ -170,9 +206,36 @@ Cut 3 — ...
 - ""GPT-컷분할""이라는 첫 줄 제목은 반드시 포함한다.
 - 위에서 제시한 형식 외의 해설, 말투, 설명 문장은 절대 추가하지 않는다.";
 
+        // @char 태그로 파싱된 캐릭터 프로필을 컨텍스트로 추가
+        string characterContext = "";
+        if (characterManager != null && ParsedCharacters.Count > 0)
+        {
+            characterContext = characterManager.BuildCharacterContext(ParsedCharacters);
+        }
+
+        // @back 태그로 파싱된 배경 프로필을 컨텍스트로 추가
+        string backgroundContext = "";
+        if (characterManager != null && ParsedBackgrounds.Count > 0)
+        {
+            backgroundContext = characterManager.BuildBackgroundContext(ParsedBackgrounds);
+        }
+
+        // @char, @back 태그 제거한 시나리오 (GPT에게는 태그 없는 순수 텍스트만 전달)
+        string cleanScenario = characterManager != null
+            ? characterManager.RemoveAllTags(scenario)
+            : scenario;
+
+        // 컨텍스트 결합 (캐릭터 + 배경)
+        string fullContext = "";
+        if (!string.IsNullOrEmpty(characterContext))
+            fullContext += characterContext + "\n";
+        if (!string.IsNullOrEmpty(backgroundContext))
+            fullContext += backgroundContext + "\n";
+
         string userPrompt =
+            (string.IsNullOrEmpty(fullContext) ? "" : fullContext + "\n") +
             "다음 시놉시스를 위 규칙에 맞는 컷 리스트로 분할해줘.\n\n" +
-            scenario;
+            cleanScenario;
 
         var requestBody = new ChatRequest
         {
@@ -244,6 +307,16 @@ Cut 3 — ...
         {
             var c = cuts[i];
 
+            // 파싱된 캐릭터들의 이름 배열 생성
+            string[] charNames = new string[ParsedCharacters.Count];
+            for (int j = 0; j < ParsedCharacters.Count; j++)
+                charNames[j] = ParsedCharacters[j].name;
+
+            // 메인 캐릭터 이미지 경로 (첫 번째 캐릭터 사용)
+            string mainCharImagePath = ParsedCharacters.Count > 0
+                ? ParsedCharacters[0].imagePath
+                : "";
+
             // 런타임 데이터 생성
             var info = new CutInfo
             {
@@ -257,7 +330,11 @@ Cut 3 — ...
                 aestheticStyle = "",
                 textStyle = "",
                 koreanShot = "",
-                englishPrompt = ""
+                englishPrompt = "",
+
+                // @char 캐릭터 정보
+                characterNames = charNames,
+                characterImagePath = mainCharImagePath
             };
 
             cutInfos[i] = info;

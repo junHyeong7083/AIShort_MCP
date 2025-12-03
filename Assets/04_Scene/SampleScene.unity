@@ -8328,7 +8328,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cab7f13f2a204ee469d2621187f6a780, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  imageUploader: {fileID: 805268797}
   runwayGenerator: {fileID: 1012118101}
   localImagePath: 
 --- !u!114 &805268797
@@ -10467,6 +10466,7 @@ MonoBehaviour:
   refineOutputText: {fileID: 1439723050}
   currentCutList:
     cuts: []
+  characterManager: {fileID: 1043816107}
 --- !u!114 &1012118099
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -10523,9 +10523,12 @@ MonoBehaviour:
   filePathText: {fileID: 1700144444}
   statusText: {fileID: 1306390117}
   refineOutputText: {fileID: 1439723050}
+  uiBinding: {fileID: 1012118098}
   textToVideoEndpoint: https://api.dev.runwayml.com/v1/text_to_video
   imageToVideoEndpoint: https://api.dev.runwayml.com/v1/image_to_video
+  textToImageEndpoint: https://api.dev.runwayml.com/v1/text_to_image
   runwayApiVersion: 2024-11-06
+  imageModel: gen4_image_turbo
   runwayModel: veo3.1
   ratio: 1280:720
   durationSeconds: 4
@@ -10849,6 +10852,52 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1031867663}
   m_CullTransparentMesh: 1
+--- !u!1 &1043816106
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1043816108}
+  - component: {fileID: 1043816107}
+  m_Layer: 0
+  m_Name: CharacterManager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1043816107
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1043816106}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1f9329662b3a1024dabfd9522afddd9b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  characters: []
+  backgrounds: []
+--- !u!4 &1043816108
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1043816106}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 1454, y: 431, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1045120401
 GameObject:
   m_ObjectHideFlags: 0
@@ -17577,6 +17626,7 @@ MonoBehaviour:
   refineOutputText: {fileID: 343003939}
   currentCutList:
     cuts: []
+  characterManager: {fileID: 1043816107}
 --- !u!114 &1744173881
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -17595,9 +17645,12 @@ MonoBehaviour:
   filePathText: {fileID: 2145065313}
   statusText: {fileID: 1256239163}
   refineOutputText: {fileID: 343003939}
+  uiBinding: {fileID: 1744173880}
   textToVideoEndpoint: https://api.dev.runwayml.com/v1/text_to_video
   imageToVideoEndpoint: https://api.dev.runwayml.com/v1/image_to_video
+  textToImageEndpoint: https://api.dev.runwayml.com/v1/text_to_image
   runwayApiVersion: 2024-11-06
+  imageModel: gen4_image_turbo
   runwayModel: veo3.1
   ratio: 1280:720
   durationSeconds: 4
@@ -21196,3 +21249,4 @@ SceneRoots:
   - {fileID: 770385653}
   - {fileID: 757936706}
   - {fileID: 805268798}
+  - {fileID: 1043816108}
