@@ -248,6 +248,7 @@ public class CharacterManager : MonoBehaviour
 
     /// <summary>
     /// 로컬 이미지 경로를 Base64 Data URI로 변환
+    /// Runway API용으로 최적화: 이미지 리사이즈 + MIME 타입 보정
     /// </summary>
     public static string ImagePathToBase64DataUri(string imagePath)
     {
@@ -259,19 +260,59 @@ public class CharacterManager : MonoBehaviour
 
         try
         {
-            byte[] imageBytes = File.ReadAllBytes(imagePath);
-            string base64 = Convert.ToBase64String(imageBytes);
+            // 원본 이미지 읽기
+            byte[] originalBytes = File.ReadAllBytes(imagePath);
 
-            // MIME 타입 결정
-            string extension = Path.GetExtension(imagePath).ToLower();
-            string mimeType = extension switch
+            // 텍스처로 로드하여 리사이즈 (Runway 최적화)
+            Texture2D tex = new Texture2D(2, 2);
+            if (!tex.LoadImage(originalBytes))
             {
-                ".png" => "image/png",
-                ".jpg" or ".jpeg" => "image/jpeg",
-                ".gif" => "image/gif",
-                ".webp" => "image/webp",
-                _ => "image/png"
-            };
+                Debug.LogError($"[CharacterManager] 이미지 로드 실패: {imagePath}");
+                return null;
+            }
+
+            // 최대 1024px로 리사이즈 (Runway 권장 크기)
+            const int maxSize = 1024;
+            int width = tex.width;
+            int height = tex.height;
+
+            if (width > maxSize || height > maxSize)
+            {
+                float scale = Mathf.Min((float)maxSize / width, (float)maxSize / height);
+                int newWidth = Mathf.RoundToInt(width * scale);
+                int newHeight = Mathf.RoundToInt(height * scale);
+
+                RenderTexture rt = RenderTexture.GetTemporary(newWidth, newHeight);
+                Graphics.Blit(tex, rt);
+
+                RenderTexture previous = RenderTexture.active;
+                RenderTexture.active = rt;
+
+                Texture2D resized = new Texture2D(newWidth, newHeight, TextureFormat.RGB24, false);
+                resized.ReadPixels(new Rect(0, 0, newWidth, newHeight), 0, 0);
+                resized.Apply();
+
+                RenderTexture.active = previous;
+                RenderTexture.ReleaseTemporary(rt);
+
+                // 기존 텍스처 해제
+                UnityEngine.Object.DestroyImmediate(tex);
+                tex = resized;
+
+                Debug.Log($"[CharacterManager] 이미지 리사이즈: {width}x{height} → {newWidth}x{newHeight}");
+            }
+
+            // JPEG으로 인코딩 (Runway는 image/jpg 선호)
+            byte[] jpegBytes = tex.EncodeToJPG(85);  // 품질 85%
+            UnityEngine.Object.DestroyImmediate(tex);
+
+            string base64 = Convert.ToBase64String(jpegBytes);
+
+            // Runway API는 image/jpg를 사용 (image/jpeg 아님!)
+            string mimeType = "image/jpg";
+
+            Debug.Log($"[CharacterManager] Base64 인코딩 완료: {imagePath}");
+            Debug.Log($"[CharacterManager] MIME: {mimeType}, 크기: {base64.Length / 1024}KB, 시작: {base64.Substring(0, Math.Min(20, base64.Length))}");
 
             return $"data:{mimeType};base64,{base64}";
         }
@@ -282,12 +323,48 @@ public class CharacterManager : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 파일 헤더(매직 바이트)로 실제 이미지 MIME 타입 판단
+    /// </summary>
+    private static string DetectImageMimeType(byte[] imageBytes)
+    {
+        if (imageBytes == null || imageBytes.Length < 4)
+            return "image/png";
+
+        // JPEG: FF D8 FF
+        if (imageBytes[0] == 0xFF && imageBytes[1] == 0xD8 && imageBytes[2] == 0xFF)
+        {
+            Debug.Log("[CharacterManager] 매직 바이트: JPEG 감지");
+            return "image/jpeg";
+        }
+
+        // PNG: 89 50 4E 47
+        if (imageBytes[0] == 0x89 && imageBytes[1] == 0x50 && imageBytes[2] == 0x4E && imageBytes[3] == 0x47)
+        {
+            Debug.Log("[CharacterManager] 매직 바이트: PNG 감지");
+            return "image/png";
+        }
+
+        // GIF: 47 49 46 38
+        if (imageBytes[0] == 0x47 && imageBytes[1] == 0x49 && imageBytes[2] == 0x46 && imageBytes[3] == 0x38)
+            return "image/gif";
+
+        // WebP: RIFF....WEBP
+        if (imageBytes.Length >= 12 &&
+            imageBytes[0] == 0x52 && imageBytes[1] == 0x49 && imageBytes[2] == 0x46 && imageBytes[3] == 0x46 &&
+            imageBytes[8] == 0x57 && imageBytes[9] == 0x45 && imageBytes[10] == 0x42 && imageBytes[11] == 0x50)
+            return "image/webp";
+
+        Debug.LogWarning("[CharacterManager] 알 수 없는 이미지 포맷, 기본값 PNG");
+        return "image/png";
+    }
+
     // ======================== @char 파싱 유틸 ========================
 
     /// <summary>
     /// 텍스트에서 @char 태그들을 찾아서 캐릭터 목록 반환
-    /// 형식: @char(이름) - 괄호 안에 이름 지정
-    /// 예: "@char(민수)가 카페에 들어간다" → ["민수"]
+    /// 형식: @char 이름 (공백으로 구분)
+    /// 예: "@char 민수가 카페에 들어간다" → ["민수"]
     /// </summary>
     public List<CharacterProfile> ParseCharacterTags(string text)
     {
@@ -295,25 +372,28 @@ public class CharacterManager : MonoBehaviour
         if (string.IsNullOrWhiteSpace(text))
             return result;
 
-        // @char(이름) 패턴 찾기
+        // @char 이름 패턴 찾기
         int idx = 0;
-        while ((idx = text.IndexOf("@char(", idx, StringComparison.OrdinalIgnoreCase)) >= 0)
+        while ((idx = text.IndexOf("@char ", idx, StringComparison.OrdinalIgnoreCase)) >= 0)
         {
-            idx += 6; // "@char(" 길이
+            idx += 6; // "@char " 길이
 
-            // 닫는 괄호까지 이름 추출
-            int endIdx = text.IndexOf(')', idx);
-            if (endIdx < 0) break; // 닫는 괄호 없으면 종료
+            // 다음 공백 또는 문장 끝까지가 이름
+            int endIdx = idx;
+            while (endIdx < text.Length && !char.IsWhiteSpace(text[endIdx]))
+                endIdx++;
 
             if (endIdx > idx)
             {
-                string charName = text.Substring(idx, endIdx - idx).Trim();
+                string rawName = text.Substring(idx, endIdx - idx).Trim();
+                // 한글 조사 제거
+                string charName = StripKoreanParticles(rawName);
                 var profile = GetCharacterByName(charName);
 
                 if (profile != null && !result.Contains(profile))
                     result.Add(profile);
                 else if (profile == null)
-                    Debug.LogWarning($"[CharacterManager] 등록되지 않은 캐릭터: {charName}");
+                    Debug.LogWarning($"[CharacterManager] 등록되지 않은 캐릭터: {charName} (원본: {rawName})");
             }
 
             idx = endIdx;
@@ -323,18 +403,48 @@ public class CharacterManager : MonoBehaviour
     }
 
     /// <summary>
+    /// 한글 조사 목록 (긴 것부터 먼저 체크)
+    /// </summary>
+    private static readonly string[] KoreanParticles = {
+        "에서", "에게", "으로", "처럼", "보다", "까지", "부터", "마저", "조차", "만큼",
+        "과", "와", "을", "를", "이", "가", "은", "는", "로", "의", "에", "도", "만"
+    };
+
+    /// <summary>
+    /// 단어 끝의 한글 조사 제거
+    /// </summary>
+    private string StripKoreanParticles(string word)
+    {
+        if (string.IsNullOrEmpty(word))
+            return word;
+
+        foreach (var particle in KoreanParticles)
+        {
+            if (word.EndsWith(particle))
+            {
+                string stripped = word.Substring(0, word.Length - particle.Length);
+                if (!string.IsNullOrEmpty(stripped))
+                    return stripped;
+            }
+        }
+
+        return word;
+    }
+
+    /// <summary>
     /// 텍스트에서 @char 태그 제거 (프롬프트 정리용)
+    /// @char 이름 → 이름 (태그만 제거)
     /// </summary>
     public string RemoveCharacterTags(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
             return text;
 
-        // @char(이름) → 이름 (태그만 제거하고 이름은 유지)
-        // 예: "@char(철수)가 걸어간다" → "철수가 걸어간다"
+        // @char 이름 → 이름 (태그만 제거하고 이름+조사는 유지)
+        // 예: "@char 철수가 걸어간다" → "철수가 걸어간다"
         var result = System.Text.RegularExpressions.Regex.Replace(
             text,
-            @"@char\(([^)]+)\)",
+            @"@char\s+(\S+)",
             "$1",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
@@ -508,8 +618,8 @@ public class CharacterManager : MonoBehaviour
 
     /// <summary>
     /// 텍스트에서 @back 태그들을 찾아서 배경 목록 반환
-    /// 형식: @back(이름) - 괄호 안에 이름 지정
-    /// 예: "@back(카페)에서 @char(민수)가 들어간다" → ["카페"]
+    /// 형식: @back 이름 (공백으로 구분)
+    /// 예: "@back 공항에서 @char 민수가 들어간다" → ["공항"]
     /// </summary>
     public List<BackgroundProfile> ParseBackgroundTags(string text)
     {
@@ -518,23 +628,26 @@ public class CharacterManager : MonoBehaviour
             return result;
 
         int idx = 0;
-        while ((idx = text.IndexOf("@back(", idx, StringComparison.OrdinalIgnoreCase)) >= 0)
+        while ((idx = text.IndexOf("@back ", idx, StringComparison.OrdinalIgnoreCase)) >= 0)
         {
-            idx += 6; // "@back(" 길이
+            idx += 6; // "@back " 길이
 
-            // 닫는 괄호까지 이름 추출
-            int endIdx = text.IndexOf(')', idx);
-            if (endIdx < 0) break; // 닫는 괄호 없으면 종료
+            // 다음 공백 또는 문장 끝까지가 이름
+            int endIdx = idx;
+            while (endIdx < text.Length && !char.IsWhiteSpace(text[endIdx]))
+                endIdx++;
 
             if (endIdx > idx)
             {
-                string bgName = text.Substring(idx, endIdx - idx).Trim();
+                string rawName = text.Substring(idx, endIdx - idx).Trim();
+                // 한글 조사 제거
+                string bgName = StripKoreanParticles(rawName);
                 var profile = GetBackgroundByName(bgName);
 
                 if (profile != null && !result.Contains(profile))
                     result.Add(profile);
                 else if (profile == null)
-                    Debug.LogWarning($"[CharacterManager] 등록되지 않은 배경: {bgName}");
+                    Debug.LogWarning($"[CharacterManager] 등록되지 않은 배경: {bgName} (원본: {rawName})");
             }
 
             idx = endIdx;
@@ -545,17 +658,18 @@ public class CharacterManager : MonoBehaviour
 
     /// <summary>
     /// 텍스트에서 @back 태그 제거
+    /// @back 이름 → 이름 (태그만 제거)
     /// </summary>
     public string RemoveBackgroundTags(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
             return text;
 
-        // @back(이름) → 이름 (태그만 제거하고 이름은 유지)
-        // 예: "@back(공항)에서 만난다" → "공항에서 만난다"
+        // @back 이름 → 이름 (태그만 제거하고 이름+조사는 유지)
+        // 예: "@back 공항에서 만난다" → "공항에서 만난다"
         var result = System.Text.RegularExpressions.Regex.Replace(
             text,
-            @"@back\(([^)]+)\)",
+            @"@back\s+(\S+)",
             "$1",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
@@ -612,14 +726,14 @@ public class CharacterManager : MonoBehaviour
     }
 
     /// <summary>
-    /// 프롬프트에 @char(이름) 또는 @back(이름) 태그가 있는지 확인
+    /// 프롬프트에 @char 이름 또는 @back 이름 태그가 있는지 확인
     /// </summary>
     public bool HasReferenceTags(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
             return false;
 
-        return text.IndexOf("@char(", StringComparison.OrdinalIgnoreCase) >= 0 ||
-               text.IndexOf("@back(", StringComparison.OrdinalIgnoreCase) >= 0;
+        return text.IndexOf("@char ", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               text.IndexOf("@back ", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 }

@@ -361,7 +361,7 @@ public class CharacterEditorWindow : EditorWindow
 
         SaveCharacters();
 
-        EditorUtility.DisplayDialog("완료", $"'{_charName}' 캐릭터가 등록되었습니다.\n\n사용법: @char({_charName})\n예: @char({_charName})가 걸어간다\n\n이미지가 앱 내부에 복사되었습니다.", "확인");
+        EditorUtility.DisplayDialog("완료", $"'{_charName}' 캐릭터가 등록되었습니다.\n\n사용법: @char {_charName}\n예: @char {_charName}가 걸어간다\n\n이미지가 앱 내부에 복사되었습니다.", "확인");
 
         _charName = "";
         _textProfile = "";
@@ -457,7 +457,7 @@ public class CharacterEditorWindow : EditorWindow
 
         SaveBackgrounds();
 
-        EditorUtility.DisplayDialog("완료", $"'{_bgName}' 배경이 등록되었습니다.\n\n사용법: @back({_bgName})\n예: @back({_bgName})에서 대화한다\n\n이미지가 앱 내부에 복사되었습니다.", "확인");
+        EditorUtility.DisplayDialog("완료", $"'{_bgName}' 배경이 등록되었습니다.\n\n사용법: @back {_bgName}\n예: @back {_bgName}에서 대화한다\n\n이미지가 앱 내부에 복사되었습니다.", "확인");
 
         _bgName = "";
         _bgDescription = "";
